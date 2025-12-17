@@ -9,7 +9,7 @@
     <style>
         body { margin: 0; overflow: hidden; font-family: sans-serif; }
         
-        /* 2. The Battery UI Overlay */
+        /* UI Layer */
         #ui-layer {
             position: absolute;
             top: 20px;
@@ -17,10 +17,11 @@
             transform: translateX(-50%);
             z-index: 10;
             text-align: center;
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.7); /* Darker background for visibility */
             padding: 15px;
             border-radius: 15px;
-            width: 200px;
+            width: 220px;
+            pointer-events: none; /* Let touches pass through */
         }
 
         #battery-container {
@@ -35,109 +36,140 @@
 
         #battery-fill {
             height: 100%;
-            width: 20%; /* Starting charge */
-            background: red;
+            width: 20%;
+            background: #ff3b30;
             transition: width 0.2s, background 0.2s;
         }
 
         #percentage-text {
             color: white;
-            font-size: 1.2rem;
+            font-size: 1.4rem;
             font-weight: bold;
-            margin-top: 5px;
+            margin-top: 8px;
+            font-family: 'Courier New', Courier, monospace; /* Tech look */
         }
 
         #status-text {
             color: #ccc;
             font-size: 0.8rem;
             margin-top: 5px;
+            text-transform: uppercase;
+        }
+
+        /* Error Message Box */
+        #error-msg {
+            display: none;
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            color: red;
+            padding: 20px;
+            z-index: 999;
+            text-align: center;
+            border-radius: 10px;
         }
     </style>
 </head>
 <body>
 
-    <a-scene mindar-face embedded vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">
-        
-        <a-camera active="false" position="0 0 0"></a-camera>
-        
-        <a-entity mindar-face-target="anchorIndex: 1" id="nose-tracker">
-            </a-entity>
-
-    </a-scene>
+    <div id="error-msg"></div>
 
     <div id="ui-layer">
         <div id="battery-container">
             <div id="battery-fill"></div>
         </div>
         <div id="percentage-text">20%</div>
-        <div id="status-text">MOVE TO CHARGE!</div>
+        <div id="status-text">INITIALIZING...</div>
     </div>
 
-    <script>
-        // Configuration
-        const CHARGE_SPEED = 2.0;       // How fast it charges
-        const DRAIN_SPEED = 0.5;        // How fast it drains
-        const MOVEMENT_THRESHOLD = 0.005; // Sensitivity to movement
+    <a-scene mindar-face 
+             embedded 
+             color-space="sRGB" 
+             renderer="colorManagement: true, physicallyCorrectLights" 
+             vr-mode-ui="enabled: false" 
+             device-orientation-permission-ui="enabled: false">
+        
+        <a-camera active="false" position="0 0 0"></a-camera>
+        
+        <a-entity mindar-face-target="anchorIndex: 1" id="nose-tracker"></a-entity>
 
-        // Variables
+    </a-scene>
+
+    <script>
+        // --- ERROR HANDLING & STARTUP ---
+        const sceneEl = document.querySelector('a-scene');
+        const errorBox = document.querySelector('#error-msg');
+        const statusLabel = document.querySelector('#status-text');
+
+        // Listen for AR Ready Event
+        sceneEl.addEventListener("arReady", (event) => {
+            console.log("AR System Ready");
+            statusLabel.textContent = "MOVE TO CHARGE!";
+        });
+
+        // Listen for AR Errors
+        sceneEl.addEventListener("arError", (event) => {
+            console.error("AR Error:", event);
+            errorBox.style.display = 'block';
+            errorBox.innerText = "Error starting AR: " + (event.detail.error || "Camera/Model failed");
+        });
+
+        // --- GAME LOGIC ---
+        const CHARGE_SPEED = 3.0;
+        const DRAIN_SPEED = 0.5;
+        const MOVEMENT_THRESHOLD = 0.008;
+
         let batteryLevel = 20;
         let lastPosition = null;
         const noseEntity = document.querySelector('#nose-tracker');
         const fillBar = document.querySelector('#battery-fill');
         const textLabel = document.querySelector('#percentage-text');
-        const statusLabel = document.querySelector('#status-text');
 
-        // Main Game Loop (Runs every 100ms)
         setInterval(() => {
-            // Get current 3D position of the nose
+            if (!noseEntity.object3D.visible) {
+                // If face not found, just drain slowly
+                updateBattery(false); 
+                return;
+            }
+
             const currentPos = noseEntity.object3D.position;
 
-            // Ensure we have a previous frame to compare against
             if (lastPosition) {
-                // Calculate distance moved (Velocity)
                 const dx = currentPos.x - lastPosition.x;
                 const dy = currentPos.y - lastPosition.y;
                 const dz = currentPos.z - lastPosition.z;
                 const speed = Math.sqrt(dx*dx + dy*dy + dz*dz);
 
-                // Game Logic
-                if (speed > MOVEMENT_THRESHOLD) {
-                    batteryLevel += CHARGE_SPEED;
-                    statusLabel.textContent = "CHARGING... ⚡";
-                    statusLabel.style.color = "#0f0";
-                } else {
-                    batteryLevel -= DRAIN_SPEED;
-                    statusLabel.textContent = "DRAINING... ⚠️";
-                    statusLabel.style.color = "#ccc";
-                }
-
-                // Clamp values (Keep between 0 and 100)
-                if (batteryLevel > 100) batteryLevel = 100;
-                if (batteryLevel < 0) batteryLevel = 0;
-
-                // Update UI
-                updateBatteryUI(batteryLevel);
+                updateBattery(speed > MOVEMENT_THRESHOLD);
             }
 
-            // Save current position for next frame
-            // We clone it because object3D.position is a reference that changes
             lastPosition = { x: currentPos.x, y: currentPos.y, z: currentPos.z };
 
         }, 100);
 
-        function updateBatteryUI(level) {
-            textLabel.innerText = Math.floor(level) + "%";
-            fillBar.style.width = level + "%";
-
-            // Change Color based on level
-            if (level < 20) {
-                fillBar.style.background = "#ff3b30"; // Red
-            } else if (level < 99) {
-                fillBar.style.background = "#ffcc00"; // Yellow
+        function updateBattery(isCharging) {
+            if (isCharging) {
+                batteryLevel += CHARGE_SPEED;
+                statusLabel.textContent = "CHARGING... ⚡";
+                statusLabel.style.color = "#4cd964";
             } else {
-                fillBar.style.background = "#4cd964"; // Green
-                statusLabel.textContent = "HUMAN CONFIRMED ✅";
+                batteryLevel -= DRAIN_SPEED;
+                statusLabel.textContent = "DRAINING... ⚠️";
+                statusLabel.style.color = "#ccc";
             }
+
+            // Clamp
+            if (batteryLevel > 100) batteryLevel = 100;
+            if (batteryLevel < 0) batteryLevel = 0;
+
+            // UI Updates
+            textLabel.innerText = Math.floor(batteryLevel) + "%";
+            fillBar.style.width = batteryLevel + "%";
+
+            if (batteryLevel < 25) fillBar.style.background = "#ff3b30";
+            else if (batteryLevel < 99) fillBar.style.background = "#ffcc00";
+            else fillBar.style.background = "#4cd964";
         }
     </script>
 </body>
